@@ -10,17 +10,95 @@ permissions:
   contents: read
   packages: write
 
+env:
+  BUILDER_DIR: builder
+  APPS_JSON_PATH: builder/.github/tmp/apps.json
+  CACHE_SCOPE: app-image-erpnext-production-v15-v2
+  TEST_IMAGE: local/erpnext:${{ github.run_id }}-${{ github.run_attempt }}
+  FINAL_IMAGE: ghcr.io/sgat-itgen/erpnext-sgat:production-v15
+
 jobs:
   build-image:
-    uses: frappe/frappe_docker/.github/workflows/app-build-image.yml@main
-    with:
-      app_name: erpnext
-      app_repo: sgat-itgen/ERPNext_SGAT
-      app_ref: production-v15
-      frappe_ref: version-15
-      frappe_image_prefix: frappe
-      image_name: ghcr.io/sgat-itgen/erpnext-sgat
-      image_tag: production-v15
-      registry: ghcr.io
-      push: true
-      platforms: linux/amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout frappe_docker builder
+        uses: actions/checkout@v4
+        with:
+          repository: frappe/frappe_docker
+          ref: main
+          path: ${{ env.BUILDER_DIR }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create apps.json
+        env:
+          APPS_JSON_PATH: ${{ env.APPS_JSON_PATH }}
+        run: |
+          mkdir -p "$(dirname "$APPS_JSON_PATH")"
+          cat > "$APPS_JSON_PATH" <<'JSON'
+          [
+            {
+              "url": "https://github.com/sgat-itgen/ERPNext_SGAT.git",
+              "branch": "production-v15"
+            }
+          ]
+          JSON
+          test -s "$APPS_JSON_PATH"
+
+      - name: Build smoke-test image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILDER_DIR }}
+          file: ${{ env.BUILDER_DIR }}/images/layered/Containerfile
+          build-args: |
+            FRAPPE_IMAGE_PREFIX=frappe
+            FRAPPE_PATH=https://github.com/frappe/frappe
+            FRAPPE_BRANCH=version-15
+            CACHE_BUST=${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
+          load: true
+          platforms: linux/amd64
+          secrets: |
+            id=apps_json,src=${{ env.APPS_JSON_PATH }}
+          tags: ${{ env.TEST_IMAGE }}
+
+      - name: Smoke test image contents
+        run: |
+          docker run --rm --entrypoint bash "${TEST_IMAGE}" -lc \
+            'test -d /home/frappe/frappe-bench/apps/frappe && \
+             test -d /home/frappe/frappe-bench/apps/erpnext && \
+             test -f /home/frappe/frappe-bench/apps/erpnext/erpnext/hooks.py'
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push production image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILDER_DIR }}
+          file: ${{ env.BUILDER_DIR }}/images/layered/Containerfile
+          build-args: |
+            FRAPPE_IMAGE_PREFIX=frappe
+            FRAPPE_PATH=https://github.com/frappe/frappe
+            FRAPPE_BRANCH=version-15
+            CACHE_BUST=${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
+          platforms: linux/amd64
+          push: true
+          secrets: |
+            id=apps_json,src=${{ env.APPS_JSON_PATH }}
+          tags: ${{ env.FINAL_IMAGE }}
