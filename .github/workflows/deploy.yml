@@ -1,32 +1,26 @@
-name: Deploy ERPNext SGAT
+name: Build ERPNext SGAT v15 Image
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - version-15
+      - production-v15
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  deploy:
-    runs-on: self-hosted
-
-    steps:
-      - name: Pull latest code
-        working-directory: /home/frappesgatadmin/frappe-bench/apps/erpnext
-        run: |
-          git fetch origin --depth=1
-          git reset --hard origin/version-15
-
-      - name: Run migrate
-        working-directory: /home/frappesgatadmin/frappe-bench
-        run: |
-          bench --site site1.local migrate
-
-      - name: Build assets
-        working-directory: /home/frappesgatadmin/frappe-bench
-        run: |
-          bench build --app erpnext
-
-      - name: Restart bench
-        working-directory: /home/frappesgatadmin/frappe-bench
-        run: |
-          bench restart || true
+  build-image:
+    uses: frappe/frappe_docker/.github/workflows/app-build-image.yml@main
+    with:
+      app_name: erpnext
+      app_repo: sgat-itgen/ERPNext_SGAT
+      app_ref: production-v15
+      frappe_ref: version-15
+      frappe_image_prefix: frappe
+      image_name: ghcr.io/sgat-itgen/erpnext-sgat
+      image_tag: production-v15
+      registry: ghcr.io
+      push: true
+      platforms: linux/amd64
