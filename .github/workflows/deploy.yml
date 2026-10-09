@@ -53,6 +53,27 @@ jobs:
           JSON
           test -s "$APPS_JSON_PATH"
 
+      - name: Force app definition into builder stage
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("builder/images/layered/Containerfile")
+          content = path.read_text()
+          mount = (
+              "RUN --mount=type=secret,id=apps_json,target=/opt/frappe/apps.json,uid=1000,gid=0 \\\n"
+              "  : \"${CACHE_BUST}\" && \\\n"
+          )
+          replacement = (
+              "COPY .github/tmp/apps.json /opt/frappe/apps.json\n"
+              "RUN : \"${CACHE_BUST}\" && \\\n"
+          )
+          if mount not in content:
+              raise SystemExit("Expected layered Containerfile build step was not found")
+          path.write_text(content.replace(mount, replacement, 1))
+          PY
+          grep -n -A5 -B2 'apps.json' builder/images/layered/Containerfile
+
       - name: Build smoke-test image
         uses: docker/build-push-action@v6
         with:
